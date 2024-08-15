@@ -313,8 +313,6 @@ class GPT(nn.Module):
 
             # pass in idx to start generating
             for pos in range(idx.size(1), idx.size(1) + max_new_tokens):
-                print(idx)
-                print(idx[:, prev_pos:pos])
                 # forward the model to get the logits for the index in the sequence
                 logits, _ = self(
                     idx[:, prev_pos:pos], use_kv_cache=True, start_pos=prev_pos
@@ -344,7 +342,6 @@ class GPT(nn.Module):
                     if idx.size(1) <= self.block_size
                     else idx[:, -self.block_size :]
                 )
-                print(idx_cond)
                 # forward the model to get the logits for the index in the sequence
                 logits, _ = self(idx_cond)
                 # pluck the logits at the final step and scale by desired temperature
