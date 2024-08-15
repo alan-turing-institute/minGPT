@@ -4,6 +4,8 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+from mingpt.utils import CfgNode as CN
+
 
 class CausalSelfAttention(nn.Module):
     """
@@ -12,7 +14,7 @@ class CausalSelfAttention(nn.Module):
     explicit implementation here to show that there is nothing too scary here.
     """
 
-    def __init__(self, config):
+    def __init__(self, config: CN):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
@@ -31,26 +33,68 @@ class CausalSelfAttention(nn.Module):
         )
         self.n_head = config.n_head
         self.n_embd = config.n_embd
+        self.max_batch_size = config.max_batch_size
+        self.block_size = config.block_size
 
-    def forward(self, x):
+        # key, value cache for fast autoregressive generation
+        # initialized to None now to avoid allocating memory to cache
+        # when it's not used or during training
+        # it will be initialsied when requested during inference in forward pass
+        self.cache_k = None
+        self.cache_v = None
+
+    def forward(self, x: torch.Tensor, use_kv_cache: bool = False, start_pos: int = 0):
         B, T, C = (
             x.size()
         )  # batch size, sequence length, embedding dimensionality (n_embd)
 
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(
-            1, 2
-        )  # (B, nh, T, hs)
+        # calculate query, key, values for all heads in batch and
+        # move head forward to be the batch dim
+        q, xk, xv = self.c_attn(x).split(self.n_embd, dim=2)
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(
             1, 2
         )  # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(
+        xk = xk.view(B, T, self.n_head, C // self.n_head).transpose(
+            1, 2
+        )  # (B, nh, T, hs)
+        xv = xv.view(B, T, self.n_head, C // self.n_head).transpose(
             1, 2
         )  # (B, nh, T, hs)
 
+        # if enabled, use key, value cache to speed up computation during inference
+        if use_kv_cache:
+            # check if cache is initialized
+            if self.cache_k is None:
+                self.cache_k = torch.zeros(
+                    self.max_batch_size,
+                    self.n_head,
+                    self.block_size,
+                    self.n_embd // self.n_head,
+                )  # (max(B), nh, max(T), hs)
+            if self.cache_v is None:
+                self.cache_v = torch.zeros(
+                    self.max_batch_size,
+                    self.n_head,
+                    self.block_size,
+                    self.n_embd // self.n_head,
+                )  # (max(B), nh, max(T), hs)
+
+            # make sure cache is on correct device
+            self.cache_k = self.cache_k.to(x)
+            self.cache_v = self.cache_v.to(x)
+
+            # store the computed keys and values in cache
+            self.cache_k[:B, start_pos : start_pos + T] = xk
+            self.cache_v[:B, start_pos : start_pos + T] = xv
+
+            # retrieve the cached keys and values
+            k = self.cache_k[:B, : start_pos + T]
+            v = self.cache_v[:B, : start_pos + T]
+        else:
+            k, v = xk, xv
+
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        att = (q @ k.transpose(-2, -1)) / math.sqrt(k.size(-1))
         att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float("-inf"))
         att = F.softmax(att, dim=-1)
         att = self.attn_dropout(att)
