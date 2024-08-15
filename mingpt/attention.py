@@ -37,7 +37,7 @@ class CausalSelfAttention(nn.Module):
         self.block_size = config.block_size
 
         # key, value cache for fast autoregressive generation
-        # initialized to None now to avoid allocating memory to cache
+        # initialised to None now to avoid allocating memory to cache
         # when it's not used or during training
         # it will be initialsied when requested during inference in forward pass
         self.cache_k = None
@@ -63,7 +63,7 @@ class CausalSelfAttention(nn.Module):
 
         # if enabled, use key, value cache to speed up computation during inference
         if use_kv_cache:
-            # check if cache is initialized
+            # check if cache is initialised; if not, initialise it to maximum batch and sequence lengths
             if self.cache_k is None:
                 self.cache_k = torch.zeros(
                     self.max_batch_size,
@@ -84,12 +84,12 @@ class CausalSelfAttention(nn.Module):
             self.cache_v = self.cache_v.to(x)
 
             # store the computed keys and values in cache
-            self.cache_k[:B, start_pos : start_pos + T] = xk
-            self.cache_v[:B, start_pos : start_pos + T] = xv
+            self.cache_k[:B, :, start_pos : start_pos + T] = xk
+            self.cache_v[:B, :, start_pos : start_pos + T] = xv
 
             # retrieve the cached keys and values
-            k = self.cache_k[:B, : start_pos + T]
-            v = self.cache_v[:B, : start_pos + T]
+            k = self.cache_k[:B, :, : start_pos + T]
+            v = self.cache_v[:B, :, : start_pos + T]
         else:
             k, v = xk, xv
 

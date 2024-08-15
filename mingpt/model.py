@@ -108,6 +108,7 @@ class GPT(nn.Module):
                     "gpt-mini": dict(n_layer=6, n_head=6, n_embd=192),
                     "gpt-micro": dict(n_layer=4, n_head=4, n_embd=128),
                     "gpt-nano": dict(n_layer=3, n_head=3, n_embd=48),
+                    "gpt-debug": dict(n_layer=1, n_head=3, n_embd=6),
                 }[config.model_type]
             )
 
@@ -148,13 +149,13 @@ class GPT(nn.Module):
     @classmethod
     def from_pretrained(cls, model_type: str):
         """
-        Initialize a pretrained GPT model by copying over the weights
+        Initialise a pretrained GPT model by copying over the weights
         from a huggingface/transformers checkpoint.
         """
         assert model_type in {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"}
         from transformers import GPT2LMHeadModel
 
-        # create a from-scratch initialized minGPT model
+        # create a from-scratch initialised minGPT model
         config = cls.get_default_config()
         config.model_type = model_type
         config.vocab_size = 50257  # openai's model vocabulary
@@ -301,8 +302,40 @@ class GPT(nn.Module):
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
         """
         if use_kv_cache:
-            # something
-            pass
+            prev_pos = 0
+            assert idx.size(1) < self.block_size
+            if idx.size(1) + max_new_tokens > self.block_size:
+                max_new_tokens = self.block_size - idx.size(1)
+                logger.warning(
+                    "Input length + max_new_tokens is larger than block_size, truncating to block_size. "
+                    f"Only generating {max_new_tokens} tokens."
+                )
+
+            # pass in idx to start generating
+            for pos in range(idx.size(1), idx.size(1) + max_new_tokens):
+                print(idx)
+                print(idx[:, prev_pos:pos])
+                # forward the model to get the logits for the index in the sequence
+                logits, _ = self(
+                    idx[:, prev_pos:pos], use_kv_cache=True, start_pos=prev_pos
+                )
+                # pluck the logits at the final step and scale by desired temperature
+                logits = logits[:, -1, :] / temperature
+                # optionally crop the logits to only the top k options
+                if top_k is not None:
+                    v, _ = torch.topk(logits, top_k)
+                    logits[logits < v[:, [-1]]] = -float("Inf")
+                # apply softmax to convert logits to (normalised) probabilities
+                probs = F.softmax(logits, dim=-1)
+                # either sample from the distribution or take the most likely element
+                if do_sample:
+                    idx_next = torch.multinomial(probs, num_samples=1)
+                else:
+                    _, idx_next = torch.topk(probs, k=1, dim=-1)
+                # append sampled index to the running sequence and continue
+                idx = torch.cat((idx, idx_next), dim=1)
+                # update the previous position
+                prev_pos = pos
         else:
             for _ in range(max_new_tokens):
                 # if the sequence context is growing too long we must crop it at block_size
@@ -311,6 +344,7 @@ class GPT(nn.Module):
                     if idx.size(1) <= self.block_size
                     else idx[:, -self.block_size :]
                 )
+                print(idx_cond)
                 # forward the model to get the logits for the index in the sequence
                 logits, _ = self(idx_cond)
                 # pluck the logits at the final step and scale by desired temperature
@@ -319,7 +353,7 @@ class GPT(nn.Module):
                 if top_k is not None:
                     v, _ = torch.topk(logits, top_k)
                     logits[logits < v[:, [-1]]] = -float("Inf")
-                # apply softmax to convert logits to (normalized) probabilities
+                # apply softmax to convert logits to (normalised) probabilities
                 probs = F.softmax(logits, dim=-1)
                 # either sample from the distribution or take the most likely element
                 if do_sample:
