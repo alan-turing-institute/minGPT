@@ -2,6 +2,7 @@
 Trains a character-level language model.
 """
 
+import argparse
 import os
 import sys
 import time
@@ -93,6 +94,9 @@ class CharDataset(Dataset):
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--use-kv-cache", action="store_true", default=False)
+    args = parser.parse_args()
 
     # get default config and overrides from the command line, if any
     config = get_config()
@@ -124,7 +128,7 @@ if __name__ == "__main__":
                 f"iter_dt {trainer.iter_dt * 1000:.2f}ms; iter {trainer.iter_num}: train loss {trainer.loss.item():.5f}"
             )
 
-        if trainer.iter_num % 500 == 0:
+        if trainer.iter_num % 200 == 0:
             # evaluate both the train and test score
             model.eval()
             with torch.no_grad():
@@ -134,25 +138,36 @@ if __name__ == "__main__":
                     [train_dataset.stoi[s] for s in context], dtype=torch.long
                 )[None, ...].to(trainer.device)
 
-                # decode with kv-cache
-                set_seed(config.system.seed)
-                start_time = time.time()
-                y = model.generate(
-                    x, 40, use_kv_cache=True, temperature=1.0, do_sample=True, top_k=10
-                )[0]
-                completion = "".join([train_dataset.itos[int(i)] for i in y])
-                logger.info(f"Time taken for kv-cache: {time.time() - start_time}")
-                print(completion)
-
-                # decode without kv-cache
-                set_seed(config.system.seed)
-                start_time = time.time()
-                y = model.generate(
-                    x, 40, use_kv_cache=False, temperature=1.0, do_sample=True, top_k=10
-                )[0]
-                completion = "".join([train_dataset.itos[int(i)] for i in y])
-                logger.info(f"Time taken without kv-cache: {time.time() - start_time}")
-                print(completion)
+                if args.use_kv_cache:
+                    # decode with kv-cache
+                    start_time = time.time()
+                    y = model.generate(
+                        x,
+                        100,
+                        use_kv_cache=True,
+                        temperature=1.0,
+                        do_sample=True,
+                        top_k=10,
+                    )[0]
+                    completion = "".join([train_dataset.itos[int(i)] for i in y])
+                    logger.info(f"Time taken for kv-cache: {time.time() - start_time}")
+                    print(completion)
+                else:
+                    # decode without kv-cache
+                    start_time = time.time()
+                    y = model.generate(
+                        x,
+                        100,
+                        use_kv_cache=False,
+                        temperature=1.0,
+                        do_sample=True,
+                        top_k=10,
+                    )[0]
+                    completion = "".join([train_dataset.itos[int(i)] for i in y])
+                    logger.info(
+                        f"Time taken without kv-cache: {time.time() - start_time}"
+                    )
+                    print(completion)
 
             # save the latest model
             logger.info("saving model...\n")
