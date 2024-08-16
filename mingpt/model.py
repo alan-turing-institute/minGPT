@@ -56,6 +56,7 @@ class GPT(nn.Module):
         C.n_layer = None
         C.n_head = None
         C.n_embd = None
+        C.n_kv_heads = None  # for GQA, where None indicates to use MHA rather than GQA
         # these options must be filled in externally
         C.vocab_size = None
         C.block_size = None
@@ -108,7 +109,9 @@ class GPT(nn.Module):
                     "gpt-mini": dict(n_layer=6, n_head=6, n_embd=192),
                     "gpt-micro": dict(n_layer=4, n_head=4, n_embd=128),
                     "gpt-nano": dict(n_layer=3, n_head=3, n_embd=48),
+                    # created by us (Turing) for our implementations with GQA
                     "gpt-debug": dict(n_layer=1, n_head=1, n_embd=6),
+                    "gpt-turing": dict(n_layer=6, n_head=8, n_embd=256),
                 }[config.model_type]
             )
 

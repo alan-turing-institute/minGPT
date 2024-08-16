@@ -78,6 +78,9 @@ class CfgNode:
         for arg in args:
 
             keyval = arg.split("=")
+            if len(keyval) == 1:
+                continue  # ignore empty args as they could be flags
+
             assert len(keyval) == 2, (
                 "expecting each override arg to be of form --arg=value, got %s" % arg
             )

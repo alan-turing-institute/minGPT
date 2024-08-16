@@ -34,13 +34,16 @@ def get_config():
 
     # model
     C.model = GPT.get_default_config()
-    C.model.model_type = "gpt-mini"
+    C.model.model_type = "gpt-turing"
 
     # trainer
     C.trainer = Trainer.get_default_config()
     C.trainer.learning_rate = (
         5e-4  # the model we're using is so small that we can go a bit faster
     )
+
+    # inference
+    C.use_kv_cache = False
 
     return C
 
@@ -94,10 +97,6 @@ class CharDataset(Dataset):
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--use-kv-cache", action="store_true", default=False)
-    args = parser.parse_args()
-
     # get default config and overrides from the command line, if any
     config = get_config()
     config.merge_from_args(sys.argv[1:])
@@ -138,36 +137,21 @@ if __name__ == "__main__":
                     [train_dataset.stoi[s] for s in context], dtype=torch.long
                 )[None, ...].to(trainer.device)
 
-                if args.use_kv_cache:
-                    # decode with kv-cache
-                    start_time = time.time()
-                    y = model.generate(
-                        x,
-                        100,
-                        use_kv_cache=True,
-                        temperature=1.0,
-                        do_sample=True,
-                        top_k=10,
-                    )[0]
-                    completion = "".join([train_dataset.itos[int(i)] for i in y])
-                    logger.info(f"Time taken for kv-cache: {time.time() - start_time}")
-                    print(completion)
-                else:
-                    # decode without kv-cache
-                    start_time = time.time()
-                    y = model.generate(
-                        x,
-                        100,
-                        use_kv_cache=False,
-                        temperature=1.0,
-                        do_sample=True,
-                        top_k=10,
-                    )[0]
-                    completion = "".join([train_dataset.itos[int(i)] for i in y])
-                    logger.info(
-                        f"Time taken without kv-cache: {time.time() - start_time}"
-                    )
-                    print(completion)
+                start_time = time.time()
+                y = model.generate(
+                    x,
+                    100,
+                    use_kv_cache=config.use_kv_cache,
+                    temperature=1.0,
+                    do_sample=True,
+                    top_k=10,
+                )[0]
+                completion = "".join([train_dataset.itos[int(i)] for i in y])
+                logger.info(
+                    f"Time taken {'with' if config.use_kv_cache else 'without'} "
+                    f"kv-cache: {time.time() - start_time}"
+                )
+                print(completion)
 
             # save the latest model
             logger.info("saving model...\n")
