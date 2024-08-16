@@ -44,6 +44,23 @@ class CausalSelfAttention(nn.Module):
         self.cache_v = None
 
     def forward(self, x: torch.Tensor, use_kv_cache: bool = False, start_pos: int = 0):
+        """
+        If use_kv_cache is True, then the key, value computed in a forward pass
+        will be cached and can be used in the next forward pass to speed up computation.
+
+        If use_kv_cache is True, then x will often be a tensor with shape (B, 1, C),
+        since we only need to input the last token in the sequence to generate the next one,
+        and the key, value cache will contain the keys and values for the entire sequence.
+        In this case, you will need to provide the start_pos argument to indicate the position
+        of the last token in the sequence - start_pos essentially indicates from where should we
+        store the computed keys and values in the cache.
+        If the tensor x has shape (B, T, C), then start_pos is often 0 as this would typically
+        be for "prefilling" the cache up to the first T tokens in the sequence.
+
+        If use_kv_cache is False, then x will often be a tensor with shape (B, T, C),
+        and we compute the key, value for the entire sequence in a forward pass.
+        No key, values are cached or retrieved in this case.
+        """
         B, T, C = (
             x.size()
         )  # batch size, sequence length, embedding dimensionality (n_embd)
