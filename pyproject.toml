@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "mingpt"
+version = "0.0.2"
+description = "A PyTorch re-implementation of GPT forked from Andrej Karpathy's mingpt repo with additional implementations of other methodologies"
+authors = ["rchan <rchan@turing.ac.uk>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+torch = "^2.4.0"
+transformers = "^4.44.0"
+
+
+[tool.poetry.group.dev.dependencies]
+black = "^24.8.0"
+isort = "^5.13.2"
+pre-commit = "^3.8.0"
+ipython = "^8.26.0"
+jupyter = "^1.0.0"
+ipywidgets = "^8.1.3"
+ipykernel = "^6.29.5"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
