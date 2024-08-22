@@ -2,8 +2,10 @@
 Trains a character-level language model.
 """
 
+import argparse
 import os
 import sys
+import time
 
 import torch
 from torch.utils.data import Dataset
@@ -92,12 +94,13 @@ class CharDataset(Dataset):
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--use-kv-cache", action="store_true", default=False)
+    args = parser.parse_args()
 
     # get default config and overrides from the command line, if any
     config = get_config()
     config.merge_from_args(sys.argv[1:])
-    print(config)
-    setup_logging(config)
     set_seed(config.system.seed)
 
     # construct the training dataset
@@ -110,7 +113,12 @@ if __name__ == "__main__":
     model = GPT(config.model)
 
     # construct the trainer object
+    config.trainer.max_iters = 3001
     trainer = Trainer(config.trainer, model, train_dataset)
+
+    # print the configuration
+    print(config)
+    setup_logging(config)
 
     # iteration callback
     def batch_end_callback(trainer):
@@ -120,7 +128,7 @@ if __name__ == "__main__":
                 f"iter_dt {trainer.iter_dt * 1000:.2f}ms; iter {trainer.iter_num}: train loss {trainer.loss.item():.5f}"
             )
 
-        if trainer.iter_num % 500 == 0:
+        if trainer.iter_num % 200 == 0:
             # evaluate both the train and test score
             model.eval()
             with torch.no_grad():
@@ -129,12 +137,40 @@ if __name__ == "__main__":
                 x = torch.tensor(
                     [train_dataset.stoi[s] for s in context], dtype=torch.long
                 )[None, ...].to(trainer.device)
-                y = model.generate(x, 500, temperature=1.0, do_sample=True, top_k=10)[0]
-                completion = "".join([train_dataset.itos[int(i)] for i in y])
-                print(completion)
+
+                if args.use_kv_cache:
+                    # decode with kv-cache
+                    start_time = time.time()
+                    y = model.generate(
+                        x,
+                        100,
+                        use_kv_cache=True,
+                        temperature=1.0,
+                        do_sample=True,
+                        top_k=10,
+                    )[0]
+                    completion = "".join([train_dataset.itos[int(i)] for i in y])
+                    logger.info(f"Time taken for kv-cache: {time.time() - start_time}")
+                    print(completion)
+                else:
+                    # decode without kv-cache
+                    start_time = time.time()
+                    y = model.generate(
+                        x,
+                        100,
+                        use_kv_cache=False,
+                        temperature=1.0,
+                        do_sample=True,
+                        top_k=10,
+                    )[0]
+                    completion = "".join([train_dataset.itos[int(i)] for i in y])
+                    logger.info(
+                        f"Time taken without kv-cache: {time.time() - start_time}"
+                    )
+                    print(completion)
 
             # save the latest model
-            logger.info("saving model")
+            logger.info("saving model...\n")
             ckpt_path = os.path.join(config.system.work_dir, "model.pt")
             torch.save(model.state_dict(), ckpt_path)
             # revert model to training mode

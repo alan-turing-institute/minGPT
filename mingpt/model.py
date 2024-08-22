@@ -23,7 +23,7 @@ from mingpt.utils import CfgNode as CN
 class Block(nn.Module):
     """an unassuming Transformer block"""
 
-    def __init__(self, config):
+    def __init__(self, config: CN):
         super().__init__()
         self.ln_1 = nn.LayerNorm(config.n_embd)
         self.attn = CausalSelfAttention(config)
@@ -39,8 +39,8 @@ class Block(nn.Module):
         m = self.mlp
         self.mlpf = lambda x: m.dropout(m.c_proj(m.act(m.c_fc(x))))  # MLP forward
 
-    def forward(self, x):
-        x = x + self.attn(self.ln_1(x))
+    def forward(self, x: torch.Tensor, use_kv_cache: bool = False, start_pos: int = 0):
+        x = x + self.attn(self.ln_1(x), use_kv_cache=use_kv_cache, start_pos=start_pos)
         x = x + self.mlpf(self.ln_2(x))
         return x
 
@@ -63,9 +63,12 @@ class GPT(nn.Module):
         C.embd_pdrop = 0.1
         C.resid_pdrop = 0.1
         C.attn_pdrop = 0.1
+        # maximum batch size for decoding (used for kv-cache creation)
+        C.max_batch_size = 64
+
         return C
 
-    def __init__(self, config):
+    def __init__(self, config: CN):
         super().__init__()
         assert config.vocab_size is not None
         assert config.block_size is not None
@@ -105,6 +108,7 @@ class GPT(nn.Module):
                     "gpt-mini": dict(n_layer=6, n_head=6, n_embd=192),
                     "gpt-micro": dict(n_layer=4, n_head=4, n_embd=128),
                     "gpt-nano": dict(n_layer=3, n_head=3, n_embd=48),
+                    "gpt-debug": dict(n_layer=1, n_head=1, n_embd=6),
                 }[config.model_type]
             )
 
@@ -131,7 +135,7 @@ class GPT(nn.Module):
         n_params = sum(p.numel() for p in self.transformer.parameters())
         logger.info("number of parameters: %.2fM" % (n_params / 1e6,))
 
-    def _init_weights(self, module):
+    def _init_weights(self, module: nn.Module):
         if isinstance(module, nn.Linear):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
             if module.bias is not None:
@@ -143,15 +147,15 @@ class GPT(nn.Module):
             torch.nn.init.ones_(module.weight)
 
     @classmethod
-    def from_pretrained(cls, model_type):
+    def from_pretrained(cls, model_type: str):
         """
-        Initialize a pretrained GPT model by copying over the weights
+        Initialise a pretrained GPT model by copying over the weights
         from a huggingface/transformers checkpoint.
         """
         assert model_type in {"gpt2", "gpt2-medium", "gpt2-large", "gpt2-xl"}
         from transformers import GPT2LMHeadModel
 
-        # create a from-scratch initialized minGPT model
+        # create a from-scratch initialised minGPT model
         config = cls.get_default_config()
         config.model_type = model_type
         config.vocab_size = 50257  # openai's model vocabulary
@@ -188,7 +192,7 @@ class GPT(nn.Module):
 
         return model
 
-    def configure_optimizers(self, train_config):
+    def configure_optimizers(self, train_config: CN):
         """
         This long function is unfortunately doing something very simple and is being very defensive:
         We are separating out all parameters of the model into two buckets: those that will experience
@@ -246,15 +250,29 @@ class GPT(nn.Module):
         )
         return optimizer
 
-    def forward(self, idx, targets=None):
+    def forward(
+        self,
+        idx: torch.Tensor,
+        targets: torch.Tensor | None = None,
+        use_kv_cache: bool = False,
+        start_pos: int = 0,
+    ):
         device = idx.device
         b, t = idx.size()
         assert (
             t <= self.block_size
         ), f"Cannot forward sequence of length {t}, block size is only {self.block_size}"
-        pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(
-            0
-        )  # shape (1, t)
+        if use_kv_cache:
+            # need to add the correct position embedding for the token we're generating
+            pos = torch.tensor(
+                [start_pos + i for i in range(t)], dtype=torch.long, device=device
+            ).unsqueeze(
+                0
+            )  # shape (1, t)
+        else:
+            pos = torch.arange(0, t, dtype=torch.long, device=device).unsqueeze(
+                0
+            )  # shape (1, t)
 
         # forward the GPT model itself
         tok_emb = self.transformer.wte(idx)  # token embeddings of shape (b, t, n_embd)
@@ -263,7 +281,7 @@ class GPT(nn.Module):
         )  # position embeddings of shape (1, t, n_embd)
         x = self.transformer.drop(tok_emb + pos_emb)
         for block in self.transformer.h:
-            x = block(x)
+            x = block(x, use_kv_cache=use_kv_cache, start_pos=start_pos)
         x = self.transformer.ln_f(x)
         logits = self.lm_head(x)
 
@@ -278,34 +296,76 @@ class GPT(nn.Module):
 
     @torch.no_grad()
     def generate(
-        self, idx, max_new_tokens, temperature=1.0, do_sample=False, top_k=None
+        self,
+        idx: torch.Tensor,
+        max_new_tokens: int,
+        use_kv_cache: bool = False,
+        temperature: float = 1.0,
+        do_sample: bool = False,
+        top_k: int | None = None,
     ):
         """
         Take a conditioning sequence of indices idx (LongTensor of shape (b,t)) and complete
         the sequence max_new_tokens times, feeding the predictions back into the model each time.
         Most likely you'll want to make sure to be in model.eval() mode of operation for this.
         """
-        for _ in range(max_new_tokens):
-            # if the sequence context is growing too long we must crop it at block_size
-            idx_cond = (
-                idx if idx.size(1) <= self.block_size else idx[:, -self.block_size :]
-            )
-            # forward the model to get the logits for the index in the sequence
-            logits, _ = self(idx_cond)
-            # pluck the logits at the final step and scale by desired temperature
-            logits = logits[:, -1, :] / temperature
-            # optionally crop the logits to only the top k options
-            if top_k is not None:
-                v, _ = torch.topk(logits, top_k)
-                logits[logits < v[:, [-1]]] = -float("Inf")
-            # apply softmax to convert logits to (normalized) probabilities
-            probs = F.softmax(logits, dim=-1)
-            # either sample from the distribution or take the most likely element
-            if do_sample:
-                idx_next = torch.multinomial(probs, num_samples=1)
-            else:
-                _, idx_next = torch.topk(probs, k=1, dim=-1)
-            # append sampled index to the running sequence and continue
-            idx = torch.cat((idx, idx_next), dim=1)
+        if use_kv_cache:
+            prev_pos = 0
+            assert idx.size(1) < self.block_size
+            if idx.size(1) + max_new_tokens > self.block_size:
+                max_new_tokens = self.block_size - idx.size(1)
+                logger.warning(
+                    "Input length + max_new_tokens is larger than block_size, truncating to block_size. "
+                    f"Only generating {max_new_tokens} tokens."
+                )
+
+            # pass in idx to start generating
+            for cur_pos in range(idx.size(1), idx.size(1) + max_new_tokens):
+                # forward the model to get the logits for the index in the sequence
+                logits, _ = self(
+                    idx[:, prev_pos:cur_pos], use_kv_cache=True, start_pos=prev_pos
+                )
+                # pluck the logits at the final step and scale by desired temperature
+                logits = logits[:, -1, :] / temperature
+                # optionally crop the logits to only the top k options
+                if top_k is not None:
+                    v, _ = torch.topk(logits, top_k)
+                    logits[logits < v[:, [-1]]] = -float("Inf")
+                # apply softmax to convert logits to (normalised) probabilities
+                probs = F.softmax(logits, dim=-1)
+                # either sample from the distribution or take the most likely element
+                if do_sample:
+                    idx_next = torch.multinomial(probs, num_samples=1)
+                else:
+                    _, idx_next = torch.topk(probs, k=1, dim=-1)
+                # append sampled index to the running sequence and continue
+                idx = torch.cat((idx, idx_next), dim=1)
+                # update the previous position
+                prev_pos = cur_pos
+        else:
+            for _ in range(max_new_tokens):
+                # if the sequence context is growing too long we must crop it at block_size
+                idx_cond = (
+                    idx
+                    if idx.size(1) <= self.block_size
+                    else idx[:, -self.block_size :]
+                )
+                # forward the model to get the logits for the index in the sequence
+                logits, _ = self(idx_cond, use_kv_cache=False)
+                # pluck the logits at the final step and scale by desired temperature
+                logits = logits[:, -1, :] / temperature
+                # optionally crop the logits to only the top k options
+                if top_k is not None:
+                    v, _ = torch.topk(logits, top_k)
+                    logits[logits < v[:, [-1]]] = -float("Inf")
+                # apply softmax to convert logits to (normalised) probabilities
+                probs = F.softmax(logits, dim=-1)
+                # either sample from the distribution or take the most likely element
+                if do_sample:
+                    idx_next = torch.multinomial(probs, num_samples=1)
+                else:
+                    _, idx_next = torch.topk(probs, k=1, dim=-1)
+                # append sampled index to the running sequence and continue
+                idx = torch.cat((idx, idx_next), dim=1)
 
         return idx
