@@ -5,6 +5,10 @@ This is a fork of Andrej Karpathy's [minGPT](https://github.com/karpathy/minGPT)
 
 We have made this fork to act as a playground for us to implement and experiment with different methodologies such as different training or inference techniques (e.g. KV-caching), model architectures, attention mechanisms, etc.
 
+Some things we have implemented so far:
+- [Key-Value caching during decoding inference](https://github.com/alan-turing-institute/minGPT/pull/10)
+- [Grouped query attention mechanism](https://github.com/alan-turing-institute/minGPT/pull/13)
+
 ## Installation
 
 To install the library, clone the repository and install as usual:
@@ -24,7 +28,7 @@ For development, please use the pre-commit hooks:
 pre-commit install
 ```
 
-## Oringinal README
+## Original README
 
 ![mingpt](mingpt.jpg)
 

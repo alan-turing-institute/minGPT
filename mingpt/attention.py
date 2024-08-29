@@ -7,18 +7,48 @@ from torch.nn import functional as F
 from mingpt.utils import CfgNode as CN
 
 
+def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
+    """
+    Repeat the key, value tensors n_rep times along the heads attention.
+    Used to repeat the key, value tensors to get the same number
+    of heads as the query tensor.
+    """
+    B, n_kv_heads, T, hs = x.shape
+    if n_rep == 1:
+        return x
+    return (
+        x[:, :, None, :, :]
+        .expand(B, n_kv_heads, n_rep, T, hs)
+        .reshape(B, n_kv_heads * n_rep, T, hs)
+    )
+
+
 class CausalSelfAttention(nn.Module):
     """
-    A vanilla multi-head masked self-attention layer with a projection at the end.
-    It is possible to use torch.nn.MultiheadAttention here but I am including an
-    explicit implementation here to show that there is nothing too scary here.
+    A grouped query masked self-attention layer with a projection at the end.
+    Also implemented with key, value cache option to speed up autoregressive
+    generation at inference time.
     """
 
     def __init__(self, config: CN):
         super().__init__()
         assert config.n_embd % config.n_head == 0
+        self.n_kv_heads = (
+            config.n_head if config.n_kv_heads is None else config.n_kv_heads
+        )
+        assert config.n_head % self.n_kv_heads == 0
+        self.n_head = config.n_head
+        self.n_embd = config.n_embd
+        self.head_size = config.n_embd // config.n_head
+        self.n_rep = (
+            self.n_head // self.n_kv_heads
+        )  # number of times to repeat key, value tensors
+
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd)
+        # in MHA case where n_head = n_kv_heads, the output is just 3 * n_embd
+        self.c_attn = nn.Linear(
+            config.n_embd, config.n_embd + 2 * self.n_kv_heads * self.head_size
+        )
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd)
         # regularization
@@ -31,8 +61,6 @@ class CausalSelfAttention(nn.Module):
                 1, 1, config.block_size, config.block_size
             ),
         )
-        self.n_head = config.n_head
-        self.n_embd = config.n_embd
         self.max_batch_size = config.max_batch_size
         self.block_size = config.block_size
 
@@ -67,16 +95,25 @@ class CausalSelfAttention(nn.Module):
 
         # calculate query, key, values for all heads in batch and
         # move head forward to be the batch dim
-        q, xk, xv = self.c_attn(x).split(self.n_embd, dim=2)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(
+        if self.n_head == self.n_kv_heads:
+            q, xk, xv = self.c_attn(x).split(self.n_embd, dim=2)
+        else:
+            q, xk, xv = self.c_attn(x).split(
+                [
+                    self.n_embd,
+                    self.n_kv_heads * self.head_size,
+                    self.n_kv_heads * self.head_size,
+                ],
+                dim=2,
+            )
+
+        q = q.view(B, T, self.n_head, self.head_size).transpose(1, 2)  # (B, nh, T, hs)
+        xk = xk.view(B, T, self.n_kv_heads, self.head_size).transpose(
             1, 2
-        )  # (B, nh, T, hs)
-        xk = xk.view(B, T, self.n_head, C // self.n_head).transpose(
+        )  # (B, n_kv_h, T, hs)
+        xv = xv.view(B, T, self.n_kv_heads, self.head_size).transpose(
             1, 2
-        )  # (B, nh, T, hs)
-        xv = xv.view(B, T, self.n_head, C // self.n_head).transpose(
-            1, 2
-        )  # (B, nh, T, hs)
+        )  # (B, n_kv_h, T, hs)
 
         # if enabled, use key, value cache to speed up computation during inference
         if use_kv_cache:
@@ -84,16 +121,16 @@ class CausalSelfAttention(nn.Module):
             if self.cache_k is None:
                 self.cache_k = torch.zeros(
                     self.max_batch_size,
-                    self.n_head,
+                    self.n_kv_heads,
                     self.block_size,
-                    self.n_embd // self.n_head,
+                    self.head_size,
                 )  # (max(B), nh, max(T), hs)
             if self.cache_v is None:
                 self.cache_v = torch.zeros(
                     self.max_batch_size,
-                    self.n_head,
+                    self.n_kv_heads,
                     self.block_size,
-                    self.n_embd // self.n_head,
+                    self.head_size,
                 )  # (max(B), nh, max(T), hs)
 
             # make sure cache is on correct device
@@ -109,6 +146,10 @@ class CausalSelfAttention(nn.Module):
             v = self.cache_v[:B, :, : start_pos + T]
         else:
             k, v = xk, xv
+
+        # repeat key and value heads if n_kv_heads < n_heads
+        k = repeat_kv(k, self.n_rep)  # (B, nh, T, hs)
+        v = repeat_kv(v, self.n_rep)  # (B, nh, T, hs)
 
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
         att = (q @ k.transpose(-2, -1)) / math.sqrt(k.size(-1))
