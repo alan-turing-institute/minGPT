@@ -237,6 +237,8 @@ torch.set_float32_matmul_precision('high')
 
 model = GPT(GPTConfig())
 model.to(device)
+if device == 'cuda':
+    model = torch.compile(model)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
 for i in range(50):
@@ -244,7 +246,11 @@ for i in range(50):
     x, y = train_loader.next_batch()
     x, y = x.to(device), y.to(device)
     optimizer.zero_grad()
-    logits, loss = model(x, y)
+    if device == "cuda":
+        with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            logits, loss = model(x, y)
+    else:
+        logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
     t1 = time.time()
