@@ -10,6 +10,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 import math
 import tiktoken
+import time
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 if torch.backends.mps.is_built():
@@ -232,15 +233,21 @@ if torch.cuda.is_available():
 
 train_loader = DataLoaderLite(B=4, T=32)
 
+torch.set_float32_matmul_precision('high')
+
 model = GPT(GPTConfig())
 model.to(device)
 
 optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
 for i in range(50):
+    t0 = time.time()
     x, y = train_loader.next_batch()
     x, y = x.to(device), y.to(device)
     optimizer.zero_grad()
     logits, loss = model(x, y)
     loss.backward()
     optimizer.step()
-    print(f"step {i}, loss: {loss.item()}")
+    t1 = time.time()
+    dt = (t1 - t0) * 1000
+    tokens_per_second = (train_loader.B * train_loader.T) / (t1 - t0)
+    print(f"step {i}, loss {loss.item()}, dt: {dt:.2f}ms, tok/sec: {tokens_per_second:.2f}")
