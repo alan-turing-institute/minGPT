@@ -188,7 +188,6 @@ max_length = 30
 
 #model = GPT.from_pretrained('gpt2')
 model = GPT(GPTConfig())
-model.eval()
 model.to(device)
 
 # Prefix tokens
@@ -207,7 +206,12 @@ y = buf[1:].view(B, T)
 # get logits
 model = GPT(GPTConfig())
 model.to(device)
-logits, loss = model(x, y)
+#logits, loss = model(x, y)
 
-print(logits.shape)
-print(loss)
+optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
+for i in range(50):
+    optimizer.zero_grad()
+    logits, loss = model(x, y)
+    loss.backward()
+    optimizer.step()
+    print(f"step {i}, loss: {loss.item()}")
