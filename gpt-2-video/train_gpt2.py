@@ -48,12 +48,18 @@ class CausalSelfAttention(nn.Module):
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
         # (B, nh, T, hs)
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        # Attention (materialises the large (T, T) matrix for all the queries and keys)
-        att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-        att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
-        att = F.softmax(att, dim=-1)
-        # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-        y = att @ v
+
+        ## Attention (materialises the large (T, T) matrix for all the queries and keys)
+        #att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
+        #att = att.masked_fill(self.bias[:,:,:T,:T] == 0, float('-inf'))
+        #att = F.softmax(att, dim=-1)
+        ## (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+        #y = att @ v
+
+        # The above six lines are replaed with the following to ensure
+        # torchcompile applies flash attension
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=True)
+
         # Re-assemble all head outputs side by side
         y = y.transpose(1, 2).contiguous().view(B, T, C)
         # output projection
