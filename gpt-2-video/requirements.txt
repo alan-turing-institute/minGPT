@@ -1,3 +1,4 @@
 transformers
-pytorch
+torch
 matplotlib
+tiktoken

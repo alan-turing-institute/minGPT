@@ -255,7 +255,7 @@ class DataLoaderLite:
 
 torch.manual_seed(1337)
 if torch.cuda.is_available():
-    toch.cuda.manual_seed(1337)
+    torch.cuda.manual_seed(1337)
 
 total_batch_size = 524288
 B = 16
