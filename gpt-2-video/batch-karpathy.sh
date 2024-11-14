@@ -15,7 +15,7 @@ module load baskerville
 module load bask-apps/live
 module load PyTorch/2.1.2-foss-2022b-CUDA-11.8.0
 
-pushd /bask/homes/o/ovau2564/vjgo8416-karpathy/ovau2564/minGPT/gpt-2-video
+pushd /bask/projects/v/vjgo8416-karpathy/${USER}/minGPT/gpt-2-video
 
 python3 -m venv venv
 source ./venv/bin/activate
