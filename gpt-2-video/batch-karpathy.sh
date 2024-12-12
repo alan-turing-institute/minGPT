@@ -3,7 +3,7 @@
 #SBATCH --account vjgo8416-karpathy
 #SBATCH --time 0:15:0
 #SBATCH --nodes 1
-#SBATCH --gpus 1
+#SBATCH --gpus 2
 #SBATCH --mem 16384
 #SBATCH --job-name karpathy-watching
 
@@ -28,7 +28,15 @@ echo "Starting"
 echo "######################################"
 echo
 
-python3 train_gpt2.py
+# Track GPU metrics
+stdbuf -o0 nvidia-smi dmon -o TD -s puct -d 1 > dmon.txt &
+
+# Track CPU metrics
+stdbuf -o0 vmstat -t 1 -y > cpu.txt &
+
+echo "GPUs: ${SLURM_GPUS}"
+
+torchrun --standalone --nproc_per_node=${SLURM_GPUS} train_gpt2.py
 
 echo
 echo "######################################"
