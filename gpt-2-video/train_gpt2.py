@@ -12,8 +12,9 @@ import math
 import tiktoken
 import time
 import inspect
-from torch.distributed import init_process_group, destroy_process_group
 import os
+from torch.distributed import init_process_group, destroy_process_group
+from torch.nn.parallel import DistributedDataParallel as DDP
 import torch.distributed as dist
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -261,7 +262,7 @@ class DataLoaderLite:
 ddp = int(os.environ.get('RANK', -1)) != -1
 if ddp:
     print("Using DDP")
-    assert torch.cudo.is_available(), "for now I think we need CUDA for DDP"
+    assert torch.cuda.is_available(), "for now I think we need CUDA for DDP"
     init_process_group(backend='nccl')
     ddp_rank = int(os.environ['RANK'])
     ddp_local_rank = int(os.environ['LOCAL_RANK'])
@@ -346,7 +347,7 @@ for step in range(max_steps):
         loss = loss / grad_accum_steps
         loss_accum += loss.detach()
         if ddp:
-            model.require_backward_grad_sync = (micro_step == (range(grad_accum_steps) - 1))
+            model.require_backward_grad_sync = (micro_step == (grad_accum_steps - 1))
         loss.backward()
     if ddp:
         dist.all_reduce(loss_accum, op=dist.ReduceOp.AVG)

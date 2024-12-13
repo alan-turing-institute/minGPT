@@ -3,12 +3,14 @@
 #SBATCH --account vjgo8416-karpathy
 #SBATCH --time 0:15:0
 #SBATCH --nodes 1
-#SBATCH --gpus 2
+#SBATCH --gpus 4
+#SBATCH --cpus-per-gpu 9
 #SBATCH --mem 16384
 #SBATCH --job-name karpathy-watching
+#SBATCH --output karpathy-%j.out
 
 # Execute using:
-# sbatch -o karpathy.out batch-karpathy.sh
+# sbatch batch-karpathy.sh
 
 module purge
 module load baskerville
@@ -21,6 +23,7 @@ python3 -m venv venv
 source ./venv/bin/activate
 pip install pip --upgrade
 pip install -r requirements.txt
+export OMP_NUM_THREADS=${SLURM_CPUS_PER_GPU}
 
 echo
 echo "######################################"
@@ -29,14 +32,17 @@ echo "######################################"
 echo
 
 # Track GPU metrics
-stdbuf -o0 nvidia-smi dmon -o TD -s puct -d 1 > dmon.txt &
+stdbuf -o0 nvidia-smi dmon -o TD -s puct -d 1 > gpu-${SLURM_JOB_ID}.txt &
 
 # Track CPU metrics
-stdbuf -o0 vmstat -t 1 -y > cpu.txt &
+stdbuf -o0 vmstat -t 1 -y > cpu-${SLURM_JOB_ID}.txt &
 
-echo "GPUs: ${SLURM_GPUS}"
-
-torchrun --standalone --nproc_per_node=${SLURM_GPUS} train_gpt2.py
+# Execute the training
+python3 \
+    -m torch.distributed.launch \
+    --standalone \
+    --nproc_per_node=${SLURM_GPUS} \
+    train_gpt2.py
 
 echo
 echo "######################################"
