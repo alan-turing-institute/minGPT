@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --qos turing
 #SBATCH --account vjgo8416-karpathy
-#SBATCH --time 0:15:0
+#SBATCH --time 3:00:0
 #SBATCH --nodes 1
 #SBATCH --gpus 4
-#SBATCH --cpus-per-gpu 9
+#SBATCH --cpus-per-gpu 36
 #SBATCH --mem 16384
 #SBATCH --job-name karpathy-watching
 #SBATCH --output karpathy-%j.out
