@@ -28,8 +28,7 @@ def tokenize(doc):
 
 def write_datafile(filename, tokens_np):
     print("Writing datafile: {filename}")
-    with open(filename, "wb") as f:
-        f.write(tokens_np.tobytes())
+    np.save(filename, tokens_np)
     print("File written: {filename}")
 
 nprocs = max(1, os.cpu_count() // 2)
